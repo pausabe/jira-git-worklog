@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+server/dist/
+web/dist/
+
+# Local data (link mappings + imputation ledger)
+server/data/
+
+# Secrets and local config
+.env
+config.yaml
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

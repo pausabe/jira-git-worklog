@@ -1,0 +1,49 @@
+# Reglas de imputacion (SIN secretos). Editable tambien desde la web.
+# Copia este fichero a config.yaml: cp config.example.yaml config.yaml
+
+# Jornada laboral
+workday:
+  # Horas por defecto de un dia laborable
+  defaultHours: 8
+  # Ajustes estacionales: en estos meses (1-12) la jornada cambia
+  seasonal:
+    - from: "06-15"
+      to: "09-15"
+      hours: 7
+
+# Reuniones/bloques fijos que se imputan siempre a una issue concreta.
+# weekday: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | '*' (todos los laborables)
+# Deja 'issue' vacio y rellenalo desde la web cuando sepas la clave.
+recurring:
+  - label: Daily
+    weekday: "*"
+    minutes: 15
+    issue: ""
+  - label: UI/UX
+    weekday: tue
+    minutes: 60
+    issue: ""
+
+# Issue a la que va el tiempo de un dia laborable SIN commits (opcional).
+# Si se deja vacio, esos dias se marcan como aviso y no se imputan.
+fallbackIssue: ""
+
+# Como repartir el tiempo restante entre los tickets tocados ese dia:
+#   'weighted-by-churn' -> proporcional a lineas cambiadas (added + deleted)
+#   'equal'             -> a partes iguales
+#   'weighted-by-commits' -> proporcional al numero de commits
+distribution: weighted-by-churn
+
+# Regex para extraer la clave de Jira del nombre de la rama.
+ticketRegex: "[A-Z][A-Z0-9]+-\\d+"
+
+# Dias festivos a saltar (formato YYYY-MM-DD)
+holidays: []
+
+# Personas del equipo. 'githubLogin' y 'emails' sirven para atribuir commits.
+# 'default: true' marca quien eres tu por defecto en la web.
+people:
+  - id: alice
+    githubLogin: alice
+    emails: []
+    default: true
