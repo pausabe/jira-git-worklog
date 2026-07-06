@@ -41,6 +41,22 @@ Each person runs the app **locally** with their own Jira API token. Worklogs are
 
 ---
 
+## Screenshots
+
+**Worklog view** — review logged days with per-ticket breakdown and hours:
+
+![Worklog view](docs/screenshots/worklog.png)
+
+**Link branches** — manually map branches that don't follow the ticket-key convention:
+
+![Link branches](docs/screenshots/link-branches.png)
+
+**Config** — manage workday rules, recurring meetings, holidays, and people:
+
+![Config](docs/screenshots/config.png)
+
+---
+
 ## Features
 
 - **Ticket detection** from branch names via configurable regex (default: `[A-Z][A-Z0-9]+-\d+`).
