@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# .dockerignore — keep the build context small and secrets out of the image
+# ---------------------------------------------------------------------------
+
+# Dependencies (installed fresh inside the build stages)
+node_modules/
+server/node_modules/
+web/node_modules/
+
+# Build artefacts (generated inside the build stages)
+dist/
+server/dist/
+web/dist/
+
+# Local data (mounted at runtime, not baked in)
+server/data/
+
+# Secrets and local config (mounted at runtime via docker-compose volumes)
+.env
+config.yaml
+
+# Documentation and editor files
+docs/
+*.md
+.vscode/
+.idea/
+.DS_Store
+
+# Git
+.git/
+.gitignore
