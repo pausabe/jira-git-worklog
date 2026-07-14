@@ -1,0 +1,58 @@
+# =============================================================================
+# jira-git-worklog — docker-compose.yml
+#
+# Single container: Fastify serves the REST API (/api/*) and the compiled
+# React SPA as static files on the same port.
+#
+# Exposed port: 4000  (overridable via the PORT variable in .env)
+#
+# Before running:
+#   cp .env.example .env          # fill in Jira / GitHub credentials
+#   cp config.example.yaml config.yaml   # adjust workday rules
+#
+# Start:
+#   docker compose up --build
+#
+# The application will be available at http://localhost:4000
+# =============================================================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Publish the port that the server listens on.
+    # The left-hand side is the host port; the right-hand side is the container
+    # port and must match PORT (default 4000).
+    ports:
+      - "${PORT:-4000}:${PORT:-4000}"
+
+    # -------------------------------------------------------------------------
+    # Runtime configuration — NEVER baked into the image.
+    # Both files must exist on the host before starting the container.
+    # -------------------------------------------------------------------------
+    volumes:
+      # Secrets + port/path overrides.  The server loads this via dotenv.
+      - type: bind
+        source: ./.env
+        target: /app/.env
+        read_only: true
+
+      # Workday rules (no secrets).  Can also be edited via the Config tab in
+      # the web UI; the server writes changes back to this file.
+      - type: bind
+        source: ./config.yaml
+        target: /app/config.yaml
+
+      # Persistent local data: branch-to-ticket links, churn cache, imputation
+      # ledger.  Mounting this directory preserves data across container restarts.
+      - type: bind
+        source: ./server/data
+        target: /app/server/data
+
+    # The HOST env var tells Fastify to bind to 0.0.0.0 (set in the Dockerfile
+    # as a default; listed here for explicitness and easy override).
+    environment:
+      HOST: "0.0.0.0"
+
+    restart: unless-stopped

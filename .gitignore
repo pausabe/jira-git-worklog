@@ -7,7 +7,9 @@ server/dist/
 web/dist/
 
 # Local data (link mappings + imputation ledger)
-server/data/
+# Keep the directory so docker compose bind-mounts work on a fresh clone.
+server/data/*
+!server/data/.gitkeep
 
 # Secrets and local config
 .env

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { PassThrough } from 'node:stream';
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { loadEnv } from './env.js';
 import { loadConfig, saveConfig, ConfigSchema } from './config.js';
@@ -10,6 +11,7 @@ import { collectCommits } from './core/collect.js';
 import { buildPlan } from './core/distribute.js';
 import { applyPlan } from './core/impute.js';
 import { listLinks, upsertLink, deleteLink, getLastLoggedDate, linkKey } from './store.js';
+import { WEB_DIST_DIR } from './paths.js';
 import type { Plan } from './types.js';
 
 const env = loadEnv();
@@ -18,6 +20,30 @@ const github = new GithubClient(env);
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
+
+// ---------------------------------------------------------------------------
+// Static assets — served in production when web/dist exists.
+// In dev the Vite dev-server handles the frontend; the proxy forwards /api calls
+// to this process, so registering static files is safe but unnecessary.
+// ---------------------------------------------------------------------------
+if (existsSync(WEB_DIST_DIR)) {
+  // @fastify/static is listed as a production dependency so it is always
+  // available inside the Docker image.
+  const { default: staticPlugin } = await import('@fastify/static');
+  await app.register(staticPlugin, {
+    root: WEB_DIST_DIR,
+    // Do NOT prefix with /api so that the SPA root is served at /.
+    prefix: '/',
+    // Fall back to index.html for client-side routing (SPA mode).
+    wildcard: false,
+  });
+
+  // Catch-all: for any non-/api path that is not a physical file, serve the
+  // SPA shell so client-side routing works after a hard refresh.
+  app.setNotFoundHandler((_req, reply) => {
+    reply.sendFile('index.html');
+  });
+}
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado YYYY-MM-DD');
 
@@ -319,9 +345,15 @@ app.get('/api/logged', async (req, reply) => {
   return { days, totalSeconds: days.reduce((s, d) => s + d.totalSeconds, 0) };
 });
 
+// ---------------------------------------------------------------------------
+// Bind — use HOST=0.0.0.0 inside Docker so the port is reachable from outside
+// the container. Defaults to 127.0.0.1 for local development (safe default).
+// ---------------------------------------------------------------------------
+const host = process.env['HOST'] ?? '127.0.0.1';
+
 app
-  .listen({ port: env.port, host: '127.0.0.1' })
-  .then(() => app.log.info(`API ready at http://127.0.0.1:${env.port}`))
+  .listen({ port: env.port, host })
+  .then(() => app.log.info(`Server ready at http://${host}:${env.port}`))
   .catch((err) => {
     app.log.error(err);
     process.exit(1);
