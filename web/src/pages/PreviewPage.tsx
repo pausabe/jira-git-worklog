@@ -815,7 +815,7 @@ export function PreviewPage() {
               <button
                 className="ghost"
                 style={{ fontSize: '0.8em', padding: '2px 8px', marginTop: 4 }}
-                disabled={!plan}
+                disabled={collecting}
                 onClick={() => addEntry(day.date)}
               >
                 + Add entry
