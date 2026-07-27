@@ -40,6 +40,17 @@ function daySeconds(day: Plan['days'][number]): number {
   return day.entries.reduce((sum, e) => sum + e.seconds, 0);
 }
 
+type DayStatus = 'holiday' | 'done' | 'partial' | 'pending' | 'empty';
+
+function dayStatus(day: Plan['days'][number], loggedSeconds: number): DayStatus {
+  if (day.weekday === 'Holiday') return 'holiday';
+  const pending = daySeconds(day);
+  if (pending === 0 && loggedSeconds > 0) return 'done';
+  if (pending > 0 && loggedSeconds > 0) return 'partial';
+  if (pending > 0) return 'pending';
+  return 'empty';
+}
+
 export function PreviewPage() {
   const config = useQuery({ queryKey: ['config'], queryFn: api.getConfig });
   const people = config.data?.people ?? [];
@@ -133,8 +144,15 @@ export function PreviewPage() {
   const displayDays = useMemo(() => {
     const base = plan?.days ?? skeletonDays;
     if (!showOnlyPending) return base;
-    return base.filter((day) => day.weekday !== 'Holiday' && daySeconds(day) > 0);
-  }, [plan, skeletonDays, showOnlyPending]);
+    // "Only pending" means "still needs something logged": hide holidays and fully
+    // logged days. Empty days stay — before generating, every day is empty, and
+    // filtering on generated entries alone would hide the whole month.
+    return base.filter((day) => {
+      const loggedSeconds = (loggedByDay[day.date] ?? []).reduce((s, e) => s + e.seconds, 0);
+      const status = dayStatus(day, loggedSeconds);
+      return status !== 'holiday' && status !== 'done';
+    });
+  }, [plan, skeletonDays, showOnlyPending, loggedByDay]);
 
   function prevMonth() {
     setCurrentMonth((prev) => {
@@ -524,14 +542,8 @@ export function PreviewPage() {
             const base = plan?.days ?? skeletonDays;
             const counts = { done: 0, partial: 0, pending: 0, empty: 0, holiday: 0 };
             for (const day of base) {
-              if (day.weekday === 'Holiday') { counts.holiday++; continue; }
-              const logged = loggedByDay[day.date] ?? [];
-              const lt = logged.reduce((s, e) => s + e.seconds, 0);
-              const pt = daySeconds(day);
-              if (pt === 0 && lt > 0) counts.done++;
-              else if (pt > 0 && lt > 0) counts.partial++;
-              else if (pt > 0) counts.pending++;
-              else counts.empty++;
+              const lt = (loggedByDay[day.date] ?? []).reduce((s, e) => s + e.seconds, 0);
+              counts[dayStatus(day, lt)]++;
             }
             const workingDays = base.filter((d) => d.weekday !== 'Holiday').length;
             return (
@@ -551,17 +563,16 @@ export function PreviewPage() {
             );
           })()}
 
+          {showOnlyPending && displayDays.length === 0 && (plan?.days ?? skeletonDays).length > 0 && (
+            <p className="hint">Nothing pending this month — every working day is fully logged.</p>
+          )}
+
           {displayDays.map((day, dayIdx) => {
             const logged = loggedByDay[day.date] ?? [];
             const loggedTotal = logged.reduce((s, e) => s + e.seconds, 0);
             const pendingTotal = daySeconds(day);
             const isHoliday = day.weekday === 'Holiday';
-            const status =
-              isHoliday ? 'holiday'
-              : pendingTotal === 0 && loggedTotal > 0 ? 'done'
-              : pendingTotal > 0 && loggedTotal > 0 ? 'partial'
-              : pendingTotal > 0 ? 'pending'
-              : 'empty';
+            const status = dayStatus(day, loggedTotal);
             const statusIcon =
               status === 'holiday'  ? <span title="Holiday / day off" style={{ color: 'var(--muted)', fontSize: '1em' }}>🏖</span>
               : status === 'done'    ? <span title="Nothing pending" style={{ color: 'var(--status-done)',    fontSize: '1em' }}>✓</span>
