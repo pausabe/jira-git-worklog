@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Config, type HolidayRange, type RecurringBlock, type Weekday, type Distribution } from '../api.js';
+import { NumberInput } from '../components/NumberInput.js';
 
 const WEEKDAYS: Weekday[] = ['*', 'mon', 'tue', 'wed', 'thu', 'fri'];
 const DISTRIBUTIONS: Distribution[] = ['weighted-by-churn', 'equal', 'weighted-by-commits'];
@@ -48,11 +49,12 @@ export function ConfigPage() {
         <div className="row">
           <div>
             <label>Default hours</label>
-            <input
-              type="number"
+            <NumberInput
               step={0.5}
+              min={0}
+              decimals={2}
               value={draft.workday.defaultHours}
-              onChange={(e) => patch({ workday: { ...draft.workday, defaultHours: Number(e.target.value) } })}
+              onChange={(defaultHours) => patch({ workday: { ...draft.workday, defaultHours } })}
             />
           </div>
           <div>
@@ -92,16 +94,16 @@ export function ConfigPage() {
                   <select value={fMM} onChange={(e) => set(`${e.target.value}-${fDD}`, `${tMM}-${tDD}`, hrs)}>
                     {MONTHS.map((m, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
                   </select>
-                  <input type="number" min={1} max={31} className="width-time" value={Number(fDD)}
-                    onChange={(e) => set(`${fMM}-${String(e.target.value).padStart(2, '0')}`, `${tMM}-${tDD}`, hrs)} />
+                  <NumberInput min={1} max={31} className="width-time" value={Number(fDD)}
+                    onChange={(d) => set(`${fMM}-${String(d).padStart(2, '0')}`, `${tMM}-${tDD}`, hrs)} />
                   <span className="muted">→</span>
                   <select value={tMM} onChange={(e) => set(`${fMM}-${fDD}`, `${e.target.value}-${tDD}`, hrs)}>
                     {MONTHS.map((m, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
                   </select>
-                  <input type="number" min={1} max={31} className="width-time" value={Number(tDD)}
-                    onChange={(e) => set(`${fMM}-${fDD}`, `${tMM}-${String(e.target.value).padStart(2, '0')}`, hrs)} />
-                  <input type="number" step={0.5} className="width-time" value={hrs}
-                    onChange={(e) => set(`${fMM}-${fDD}`, `${tMM}-${tDD}`, Number(e.target.value))} />
+                  <NumberInput min={1} max={31} className="width-time" value={Number(tDD)}
+                    onChange={(d) => set(`${fMM}-${fDD}`, `${tMM}-${String(d).padStart(2, '0')}`, hrs)} />
+                  <NumberInput step={0.5} min={0} decimals={2} className="width-time" value={hrs}
+                    onChange={(h) => set(`${fMM}-${fDD}`, `${tMM}-${tDD}`, h)} />
                   <span className="muted">h</span>
                 </div>
               );
@@ -148,11 +150,11 @@ export function ConfigPage() {
                   </select>
                 </td>
                 <td>
-                  <input
-                    type="number"
+                  <NumberInput
+                    min={0}
                     className="width-time"
                     value={block.minutes}
-                    onChange={(e) => updateRecurring(idx, { minutes: Number(e.target.value) })}
+                    onChange={(minutes) => updateRecurring(idx, { minutes })}
                   />
                 </td>
                 <td>

@@ -8,6 +8,7 @@ import {
   type Plan,
   type ImputeResult,
 } from '../api.js';
+import { NumberInput } from '../components/NumberInput.js';
 
 function currentMonthYm(): string {
   const d = new Date();
@@ -692,9 +693,9 @@ export function PreviewPage() {
                                   style={{ width: '100%', minWidth: 120 }} />
                               </td>
                               <td className="width-time">
-                                <input type="number" step={0.25} min={0.25} disabled={busy}
-                                  value={(editing.seconds / 3600).toFixed(2)}
-                                  onChange={(e) => setEditingEntry((p) => ({ ...p, [ek]: { ...p[ek]!, seconds: Math.max(900, Math.round(Number(e.target.value) * 3600)) } }))} />
+                                <NumberInput step={0.25} min={0.25} decimals={2} disabled={busy}
+                                  value={editing.seconds / 3600}
+                                  onChange={(hours) => setEditingEntry((p) => ({ ...p, [ek]: { ...p[ek]!, seconds: Math.round(hours * 3600) } }))} />
                               </td>
                               <td style={{ width: 80, whiteSpace: 'nowrap' }}>
                                 <button className="primary" style={{ fontSize: '0.78em', padding: '2px 7px' }} disabled={busy}
@@ -793,15 +794,13 @@ export function PreviewPage() {
                           />
                         </td>
                         <td className="width-time">
-                          <input
-                            type="number"
+                          <NumberInput
                             step={0.25}
                             min={0}
-                            value={(entry.seconds / 3600).toFixed(2)}
-                            onChange={(e) =>
-                              updateEntry(day.date, entryIdx, {
-                                seconds: Math.max(0, Math.round(Number(e.target.value) * 3600)),
-                              })
+                            decimals={2}
+                            value={entry.seconds / 3600}
+                            onChange={(hours) =>
+                              updateEntry(day.date, entryIdx, { seconds: Math.round(hours * 3600) })
                             }
                           />
                         </td>
