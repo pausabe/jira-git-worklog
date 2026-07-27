@@ -42,13 +42,21 @@ function daySeconds(day: Plan['days'][number]): number {
 
 type DayStatus = 'holiday' | 'done' | 'partial' | 'pending' | 'empty';
 
+/**
+ * A day is judged against its workday, not against "is anything logged at all":
+ * 4h logged out of an 8h day is still unfinished business.
+ */
 function dayStatus(day: Plan['days'][number], loggedSeconds: number): DayStatus {
   if (day.weekday === 'Holiday') return 'holiday';
-  const pending = daySeconds(day);
-  if (pending === 0 && loggedSeconds > 0) return 'done';
-  if (pending > 0 && loggedSeconds > 0) return 'partial';
-  if (pending > 0) return 'pending';
+  if (loggedSeconds >= day.workdaySeconds) return 'done';
+  if (loggedSeconds > 0) return 'partial';
+  if (daySeconds(day) > 0) return 'pending';
   return 'empty';
+}
+
+/** Seconds still needed to complete the workday, counting what is logged and what is already planned. */
+function remainingSeconds(day: Plan['days'][number], loggedSeconds: number): number {
+  return Math.max(0, day.workdaySeconds - loggedSeconds - daySeconds(day));
 }
 
 export function PreviewPage() {
@@ -144,8 +152,9 @@ export function PreviewPage() {
   const displayDays = useMemo(() => {
     const base = plan?.days ?? skeletonDays;
     if (!showOnlyPending) return base;
-    // "Only pending" means "still needs something logged": hide holidays and fully
-    // logged days. Empty days stay — before generating, every day is empty, and
+    // "Only pending" means "the workday is not closed yet": hide holidays and days
+    // whose logged time already covers the workday. A day with 4h of an 8h workday
+    // stays, and so do empty days — before generating, every day is empty, and
     // filtering on generated entries alone would hide the whole month.
     return base.filter((day) => {
       const loggedSeconds = (loggedByDay[day.date] ?? []).reduce((s, e) => s + e.seconds, 0);
@@ -256,13 +265,13 @@ export function PreviewPage() {
     }
   }
 
-  async function logDay(dayIdx: number) {
-    const day = plan!.days[dayIdx]!;
-    const date = day.date;
+  async function logDay(date: string) {
+    const day = plan?.days.find((d) => d.date === date);
+    if (!plan || !day) return;
     setDayLoading((prev) => new Set([...prev, date]));
     setDayErrors((prev) => { const n = { ...prev }; delete n[date]; return n; });
     try {
-      const singlePlan: Plan = { ...plan!, days: [day] };
+      const singlePlan: Plan = { ...plan, days: [day] };
       const res = await api.impute(activePerson, singlePlan);
       setDayResults((prev) => ({ ...prev, [date]: res }));
       // Move logged entries into loggedByDay for immediate display
@@ -284,7 +293,8 @@ export function PreviewPage() {
       setPlan((prev) => {
         if (!prev) return prev;
         const next = structuredClone(prev);
-        const d = next.days[dayIdx]!;
+        const d = next.days.find((x) => x.date === date);
+        if (!d) return prev;
         d.existingSeconds += d.entries.reduce((s, e) => s + e.seconds, 0);
         d.entries = [];
         return next;
@@ -334,33 +344,47 @@ export function PreviewPage() {
     [plan],
   );
 
-  function updateEntry(dayIdx: number, entryIdx: number, patch: Partial<Plan['days'][number]['entries'][number]>) {
+  // Day-scoped edits are keyed by date, never by array index: the rendered list
+  // can be filtered ("only pending"), so a positional index would hit another day.
+  function updateEntry(date: string, entryIdx: number, patch: Partial<Plan['days'][number]['entries'][number]>) {
     setPlan((prev) => {
       if (!prev) return prev;
       const next = structuredClone(prev);
-      Object.assign(next.days[dayIdx]!.entries[entryIdx]!, patch);
+      const entry = next.days.find((d) => d.date === date)?.entries[entryIdx];
+      if (!entry) return prev;
+      Object.assign(entry, patch);
       return next;
     });
   }
 
-  function removeEntry(dayIdx: number, entryIdx: number) {
+  function removeEntry(date: string, entryIdx: number) {
     setPlan((prev) => {
       if (!prev) return prev;
       const next = structuredClone(prev);
-      next.days[dayIdx]!.entries.splice(entryIdx, 1);
+      const day = next.days.find((d) => d.date === date);
+      if (!day) return prev;
+      day.entries.splice(entryIdx, 1);
       return next;
     });
   }
 
-  function addEntry(dayIdx: number) {
+  function addEntry(date: string) {
     setPlan((prev) => {
-      if (!prev) return prev;
-      const next = structuredClone(prev);
-      const day = next.days[dayIdx]!;
+      // Before generating there is no plan yet — seed one from the skeleton so a
+      // day can be filled in by hand without collecting commits first.
+      const next: Plan = prev
+        ? structuredClone(prev)
+        : { person: activePerson, from, to, days: structuredClone(skeletonDays) };
+      const day = next.days.find((d) => d.date === date);
+      if (!day) return prev;
+      // Propose whatever is still missing to close the workday. When the day is
+      // already covered there is nothing to derive, so fall back to one hour.
+      const logged = (loggedByDay[date] ?? []).reduce((s, e) => s + e.seconds, 0);
+      const seconds = remainingSeconds(day, logged) || 3600;
       day.entries.push({
         date: day.date,
         issue: '',
-        seconds: 3600,
+        seconds,
         source: 'fallback',
         label: 'manual',
         comment: '',
@@ -567,7 +591,7 @@ export function PreviewPage() {
             <p className="hint">Nothing pending this month — every working day is fully logged.</p>
           )}
 
-          {displayDays.map((day, dayIdx) => {
+          {displayDays.map((day) => {
             const logged = loggedByDay[day.date] ?? [];
             const loggedTotal = logged.reduce((s, e) => s + e.seconds, 0);
             const pendingTotal = daySeconds(day);
@@ -575,10 +599,10 @@ export function PreviewPage() {
             const status = dayStatus(day, loggedTotal);
             const statusIcon =
               status === 'holiday'  ? <span title="Holiday / day off" style={{ color: 'var(--muted)', fontSize: '1em' }}>🏖</span>
-              : status === 'done'    ? <span title="Nothing pending" style={{ color: 'var(--status-done)',    fontSize: '1em' }}>✓</span>
-              : status === 'partial' ? <span title="Has pending entries" style={{ color: 'var(--status-partial)', fontSize: '1em' }}>◑</span>
-              : status === 'pending' ? <span title="Not logged yet"   style={{ color: 'var(--status-pending)', fontSize: '1em' }}>○</span>
-              : <span title="Nothing to log" style={{ color: 'var(--status-empty)', fontSize: '1em' }}>–</span>;
+              : status === 'done'    ? <span title={`Workday complete (${secondsToHours(loggedTotal)} logged)`} style={{ color: 'var(--status-done)',    fontSize: '1em' }}>✓</span>
+              : status === 'partial' ? <span title={`${secondsToHours(loggedTotal)} logged of ${secondsToHours(day.workdaySeconds)} — workday incomplete`} style={{ color: 'var(--status-partial)', fontSize: '1em' }}>◑</span>
+              : status === 'pending' ? <span title="Nothing logged yet"   style={{ color: 'var(--status-pending)', fontSize: '1em' }}>○</span>
+              : <span title="Nothing logged and nothing to log" style={{ color: 'var(--status-empty)', fontSize: '1em' }}>–</span>;
             return (
             <div key={day.date} className={`day-card status-${status}`}>
               <div className="day-head">
@@ -622,7 +646,7 @@ export function PreviewPage() {
                     disabled={dayLoading.has(day.date) || pendingTotal === 0}
                     onClick={() => {
                       if (window.confirm(`Log ${secondsToHours(pendingTotal)} to Jira for ${day.date}?`)) {
-                        logDay(dayIdx);
+                        logDay(day.date);
                       }
                     }}
                     style={{ padding: '2px 8px', fontSize: '0.8em' }}
@@ -753,7 +777,7 @@ export function PreviewPage() {
                         <td className="width-issue">
                           <input
                             value={entry.issue}
-                            onChange={(e) => updateEntry(dayIdx, entryIdx, { issue: e.target.value.toUpperCase() })}
+                            onChange={(e) => updateEntry(day.date, entryIdx, { issue: e.target.value.toUpperCase() })}
                           />
                         </td>
                         <td>
@@ -764,7 +788,7 @@ export function PreviewPage() {
                           <input
                             value={entry.comment ?? ''}
                             placeholder="worklog comment…"
-                            onChange={(e) => updateEntry(dayIdx, entryIdx, { comment: e.target.value })}
+                            onChange={(e) => updateEntry(day.date, entryIdx, { comment: e.target.value })}
                             style={{ width: '100%', minWidth: 160 }}
                           />
                         </td>
@@ -775,14 +799,14 @@ export function PreviewPage() {
                             min={0}
                             value={(entry.seconds / 3600).toFixed(2)}
                             onChange={(e) =>
-                              updateEntry(dayIdx, entryIdx, {
+                              updateEntry(day.date, entryIdx, {
                                 seconds: Math.max(0, Math.round(Number(e.target.value) * 3600)),
                               })
                             }
                           />
                         </td>
                         <td style={{ width: 40 }}>
-                          <button className="danger" onClick={() => removeEntry(dayIdx, entryIdx)}>x</button>
+                          <button className="danger" onClick={() => removeEntry(day.date, entryIdx)}>x</button>
                         </td>
                       </tr>
                     ))}
@@ -793,7 +817,7 @@ export function PreviewPage() {
                 className="ghost"
                 style={{ fontSize: '0.8em', padding: '2px 8px', marginTop: 4 }}
                 disabled={!plan}
-                onClick={() => addEntry(dayIdx)}
+                onClick={() => addEntry(day.date)}
               >
                 + Add entry
               </button>
