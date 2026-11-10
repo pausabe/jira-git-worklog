@@ -53,6 +53,9 @@ export const ConfigSchema = z.object({
   distribution: DistributionSchema.default('weighted-by-churn'),
   ticketRegex: z.string().default('[A-Z][A-Z0-9]+-\\d+'),
   holidays: z.array(HolidayRangeSchema).default([]),
+  // Opt-in: when off (the default) the app never calls Factorial and behaves
+  // exactly as it did before the integration existed.
+  factorial: z.object({ enabled: z.boolean().default(false) }).default({}),
   people: z.array(PersonSchema).default([]),
   defaultComments: z
     .object({

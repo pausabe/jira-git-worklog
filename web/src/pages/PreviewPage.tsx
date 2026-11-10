@@ -70,7 +70,7 @@ export function PreviewPage() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [commitsByDay, setCommitsByDay] = useState<Record<string, CommitInfo[]>>({});
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
-  const [meta, setMeta] = useState<{ unlinkedBranches: typeof plan extends null ? never[] : any[]; stats: { reposScanned: number; branchesScanned: number; commits: number } } | null>(null);
+  const [meta, setMeta] = useState<{ unlinkedBranches: typeof plan extends null ? never[] : any[]; stats: { reposScanned: number; branchesScanned: number; commits: number }; notices: string[] } | null>(null);
   const [result, setResult] = useState<ImputeResult | null>(null);
   const [collecting, setCollecting] = useState(false);
   const [loadingLogged, setLoadingLogged] = useState(false);
@@ -107,6 +107,14 @@ export function PreviewPage() {
 
   const monthLabel = new Date(`${currentMonth}-15`).toLocaleString('default', { month: 'long', year: 'numeric' });
 
+  // Only asked for when the Factorial integration is switched on in the config.
+  const timeOff = useQuery({
+    queryKey: ['time-off', activePerson, from, to],
+    queryFn: () => api.timeOff(activePerson, from, to),
+    enabled: Boolean(activePerson) && Boolean(config.data?.factorial?.enabled),
+    staleTime: 5 * 60_000,
+  });
+
   const skeletonDays = useMemo((): Plan['days'] => {
     const holidaySet = new Set<string>();
     for (const h of config.data?.holidays ?? []) {
@@ -136,19 +144,25 @@ export function PreviewPage() {
         const dd = String(d.getDate()).padStart(2, '0');
         const dateStr = `${yy}-${mm}-${dd}`;
         const isHoliday = holidaySet.has(dateStr);
+        // Same rule as the server's buildPlan: Factorial shrinks the workday,
+        // and a workday shrunk to nothing is a day off.
+        const off = isHoliday ? undefined : timeOff.data?.days[dateStr];
+        const workdaySeconds = isHoliday ? 0 : Math.max(0, workdaySecondsFor(dateStr) - (off?.secondsOff ?? 0));
+        const isDayOff = isHoliday || (off !== undefined && workdaySeconds === 0);
         result.push({
           date: dateStr,
-          weekday: isHoliday ? 'Holiday' : names[dow]!,
-          workdaySeconds: isHoliday ? 0 : workdaySecondsFor(dateStr),
+          weekday: isDayOff ? 'Holiday' : names[dow]!,
+          workdaySeconds,
           entries: [],
-          warnings: [],
+          warnings: (off?.pending ?? []).map((type) => `Time off pending approval in Factorial: ${type}. Planned as a working day.`),
           existingSeconds: 0,
+          ...(off && off.reasons.length > 0 ? { timeOff: off.reasons } : {}),
         });
       }
       d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
     }
     return result;
-  }, [from, to, config.data]);
+  }, [from, to, config.data, timeOff.data]);
 
   const displayDays = useMemo(() => {
     const base = plan?.days ?? skeletonDays;
@@ -246,7 +260,7 @@ export function PreviewPage() {
       setCommitsByDay(data.commitsByDay ?? {});
       setLoggedByDay(data.loggedByDay ?? {});
       setExpandedDays(new Set());
-      setMeta({ unlinkedBranches: data.unlinkedBranches, stats: data.stats });
+      setMeta({ unlinkedBranches: data.unlinkedBranches, stats: data.stats, notices: data.notices });
       setTempTickets((prev) => {
         const next = { ...prev };
         for (const ub of data.unlinkedBranches) {
@@ -478,6 +492,9 @@ export function PreviewPage() {
             {meta.stats.reposScanned} repos · {meta.stats.branchesScanned} branches · {meta.stats.commits} attributed commits
           </p>
         )}
+        {(meta?.notices ?? timeOff.data?.notices ?? []).map((notice, i) => (
+          <p key={i} className="warn">{notice}</p>
+        ))}
       </div>
 
       {meta && meta.unlinkedBranches.length > 0 && (
@@ -558,6 +575,9 @@ export function PreviewPage() {
               {result.failed.length > 0 && (
                 <span className="error"> — {result.failed.map((f) => `${f.issue}: ${f.error}`).join('; ')}</span>
               )}
+              {result.skipped.some((s) => s.reason !== 'already logged') && (
+                <span className="warn"> — not logged: {[...new Set(result.skipped.filter((s) => s.reason !== 'already logged').map((s) => `${s.date} ${s.reason}`))].join('; ')}</span>
+              )}
             </p>
           )}
 
@@ -627,7 +647,7 @@ export function PreviewPage() {
                   )}
                 </strong>
                 {isHoliday ? (
-                  <span className="muted" style={{ fontSize: '0.85em' }}>day off</span>
+                  <span className="muted" style={{ fontSize: '0.85em' }}>{day.timeOff?.join(' · ') ?? 'day off'}</span>
                 ) : (
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span
@@ -663,6 +683,9 @@ export function PreviewPage() {
                   Created {dayResults[day.date]!.created.length} · skipped {dayResults[day.date]!.skipped.length}
                   {dayResults[day.date]!.failed.length > 0 && (
                     <span className="error"> · {dayResults[day.date]!.failed.map((f) => f.error).join('; ')}</span>
+                  )}
+                  {dayResults[day.date]!.skipped.some((s) => s.reason !== 'already logged') && (
+                    <span className="warn"> · not logged: {[...new Set(dayResults[day.date]!.skipped.filter((s) => s.reason !== 'already logged').map((s) => s.reason))].join('; ')}</span>
                   )}
                 </p>
               )}
@@ -765,6 +788,10 @@ export function PreviewPage() {
                 </table>
               )}
 
+              {!isHoliday && day.timeOff && day.timeOff.length > 0 && (
+                <p className="hint">Time off: {day.timeOff.join(' · ')} — workday reduced to {secondsToHours(day.workdaySeconds)}</p>
+              )}
+
               {day.warnings.map((w, i) => (
                 <p key={i} className="warn">{w}</p>
               ))}
@@ -812,6 +839,8 @@ export function PreviewPage() {
                   </tbody>
                 </table>
               )}
+              {/* A day off recorded in Factorial takes no entries: the server would refuse them. */}
+              {!(isHoliday && day.timeOff) && (
               <button
                 className="ghost"
                 style={{ fontSize: '0.8em', padding: '2px 8px', marginTop: 4 }}
@@ -820,6 +849,7 @@ export function PreviewPage() {
               >
                 + Add entry
               </button>
+              )}
             </div>
             );
           })}

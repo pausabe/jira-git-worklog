@@ -43,6 +43,8 @@ export interface DayPlan {
   existingSeconds: number;
   entries: WorklogEntry[];
   warnings: string[];
+  /** Time off taken this day according to Factorial (holiday name or leave type). */
+  timeOff?: string[];
 }
 
 /** The full imputation plan for a person over a date range. */

@@ -4,11 +4,13 @@ import { PassThrough } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { loadEnv } from './env.js';
-import { loadConfig, saveConfig, ConfigSchema } from './config.js';
+import { loadConfig, saveConfig, ConfigSchema, type Config, type Person } from './config.js';
 import { JiraClient } from './clients/jira.js';
 import { GithubClient } from './clients/github.js';
 import { collectCommits } from './core/collect.js';
-import { buildPlan } from './core/distribute.js';
+import { FactorialClient } from './clients/factorial.js';
+import { buildPlan, workdaySecondsFor } from './core/distribute.js';
+import { resolveDaysOff, timeOffViolation, type DayOff } from './core/timeoff.js';
 import { applyPlan } from './core/impute.js';
 import { listLinks, upsertLink, deleteLink, getLastLoggedDate, linkKey } from './store.js';
 import { WEB_DIST_DIR } from './paths.js';
@@ -17,6 +19,7 @@ import type { Plan } from './types.js';
 const env = loadEnv();
 const jira = new JiraClient(env);
 const github = new GithubClient(env);
+const factorial = env.factorialApiKey ? new FactorialClient(env.factorialApiKey) : null;
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
@@ -46,6 +49,42 @@ if (existsSync(WEB_DIST_DIR)) {
 }
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado YYYY-MM-DD');
+
+interface TimeOffLookup {
+  /** Undefined when Factorial is disabled or could not be consulted. */
+  daysOff?: Map<string, DayOff>;
+  /** Why time off is missing, when it is enabled but unavailable. */
+  notices: string[];
+}
+
+/**
+ * Looks up one person's time off in Factorial for [from, to]. With
+ * `factorial.enabled` off it does nothing, so the app behaves as it did before.
+ */
+async function loadDaysOff(config: Config, person: Person, from: string, to: string): Promise<TimeOffLookup> {
+  if (!config.factorial.enabled) return { notices: [] };
+  if (!factorial) {
+    return { notices: ['Factorial is enabled in the config but FACTORIAL_API_KEY is not set. Time off was not applied.'] };
+  }
+  try {
+    const employee = await factorial.findEmployee(person.emails);
+    if (!employee) {
+      return { notices: [`Factorial: no employee matches the emails of '${person.id}'. Time off was not applied.`] };
+    }
+    const [leaves, companyHolidays] = await Promise.all([
+      factorial.listLeaves(employee.id, from, to),
+      employee.locationId !== null
+        ? factorial.listCompanyHolidays(employee.locationId, from, to)
+        : Promise.resolve([]),
+    ]);
+    return {
+      daysOff: resolveDaysOff(leaves, companyHolidays, from, to, (date) => workdaySecondsFor(config, date)),
+      notices: [],
+    };
+  } catch (err) {
+    return { notices: [`${(err as Error).message}. Time off was not applied.`] };
+  }
+}
 
 app.get('/api/health', async () => ({ ok: true }));
 
@@ -121,6 +160,11 @@ app.post('/api/preview', async (req, reply) => {
       existingIssuesByDay.set(date, new Set(entries.map((e) => e.issueKey)));
     }
 
+    // Time off is optional context: if Factorial is unreachable the plan is
+    // still built, and the user is told that days off were not applied.
+    if (config.factorial.enabled) send({ type: 'progress', message: 'Checking time off in Factorial…' });
+    const { daysOff, notices } = await loadDaysOff(config, person, from, to);
+
     const extraLinks = tempLinks?.length
       ? new Map(tempLinks.map(({ repo, branch, ticket }) => [linkKey(repo, branch), ticket]))
       : undefined;
@@ -128,7 +172,7 @@ app.post('/api/preview', async (req, reply) => {
       send({ type: 'progress', message: msg }),
       extraLinks,
     );
-    const plan = buildPlan(config, person.id, from, to, collected.commits, existingByDay, existingIssuesByDay);
+    const plan = buildPlan(config, person.id, from, to, collected.commits, existingByDay, existingIssuesByDay, daysOff);
     const commitsByDay: Record<string, Array<{ repo: string; branch: string; ticket: string; message: string; churn: number; unlinked?: boolean }>> = {};
     for (const c of collected.commits) {
       const date = c.date.slice(0, 10);
@@ -151,6 +195,7 @@ app.post('/api/preview', async (req, reply) => {
       })),
       commitsByDay,
       loggedByDay,
+      notices,
       stats: {
         reposScanned: collected.reposScanned,
         branchesScanned: collected.branchesScanned,
@@ -189,6 +234,7 @@ const ImputeBody = z.object({
           }),
         ),
         warnings: z.array(z.string()),
+        timeOff: z.array(z.string()).optional(),
       }),
     ),
   }),
@@ -200,7 +246,57 @@ app.post('/api/impute', async (req, reply) => {
     reply.code(400);
     return { error: 'Invalid parameters', issues: parsed.error.issues };
   }
-  return applyPlan(jira, parsed.data.person, parsed.data.plan as Plan);
+  const plan = parsed.data.plan as Plan;
+  const config = await loadConfig(env.configPath);
+  if (!config.factorial.enabled) return applyPlan(jira, parsed.data.person, plan);
+
+  // Factorial is the source of truth for days off: re-check it here, because the
+  // plan arrives from the browser and may have been edited by hand.
+  const person = config.people.find((p) => p.id === parsed.data.person);
+  if (!person) {
+    reply.code(400);
+    return { error: `Person '${parsed.data.person}' not found in config.people` };
+  }
+  const dates = plan.days.filter((d) => d.entries.some((e) => e.seconds > 0)).map((d) => d.date).sort();
+  if (dates.length === 0) return applyPlan(jira, parsed.data.person, plan);
+  const { daysOff, notices } = await loadDaysOff(config, person, dates[0]!, dates[dates.length - 1]!);
+  if (!daysOff) {
+    reply.code(502);
+    return { error: `Nothing was logged: time off could not be checked. ${notices.join(' ')}` };
+  }
+
+  const blocked: Array<{ date: string; issue: string; reason: string }> = [];
+  const allowedDays = plan.days.map((day) => {
+    const planned = day.entries.reduce((sum, e) => sum + e.seconds, 0);
+    const reason = timeOffViolation(planned, daysOff.get(day.date), workdaySecondsFor(config, day.date));
+    if (!reason) return day;
+    for (const e of day.entries) {
+      if (e.issue && e.seconds > 0) blocked.push({ date: e.date, issue: e.issue, reason });
+    }
+    return { ...day, entries: [] };
+  });
+  const result = await applyPlan(jira, parsed.data.person, { ...plan, days: allowedDays });
+  return { ...result, skipped: [...blocked, ...result.skipped] };
+});
+
+const TimeOffQuery = z.object({ person: z.string().min(1), from: DateStr, to: DateStr });
+
+/** Time off per day, so the month view can show it before a plan is generated. */
+app.get('/api/time-off', async (req, reply) => {
+  const parsed = TimeOffQuery.safeParse(req.query);
+  if (!parsed.success) {
+    reply.code(400);
+    return { error: 'Invalid parameters', issues: parsed.error.issues };
+  }
+  const { person: personId, from, to } = parsed.data;
+  const config = await loadConfig(env.configPath);
+  const person = config.people.find((p) => p.id === personId);
+  if (!person) {
+    reply.code(400);
+    return { error: `Person '${personId}' not found in config.people` };
+  }
+  const { daysOff, notices } = await loadDaysOff(config, person, from, to);
+  return { enabled: config.factorial.enabled, days: Object.fromEntries(daysOff ?? []), notices };
 });
 
 app.get('/api/links', async () => listLinks());
