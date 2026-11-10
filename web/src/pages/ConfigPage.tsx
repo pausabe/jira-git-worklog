@@ -180,6 +180,24 @@ export function ConfigPage() {
       </div>
 
       <div className="panel">
+        <h2>Factorial</h2>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={draft.factorial?.enabled ?? false}
+            onChange={(e) => patch({ factorial: { enabled: e.target.checked } })}
+          />
+          <span className="toggle-track"><span className="toggle-thumb" /></span>
+          Use Factorial time off
+        </label>
+        <p className="hint">
+          When on, your leaves and your office's holidays in Factorial shrink or remove each day's workday, and
+          logging on a day off is refused. Needs FACTORIAL_API_KEY in the server environment. When off, only the
+          holidays below apply.
+        </p>
+      </div>
+
+      <div className="panel">
         <h2>Holidays</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {draft.holidays.map((range: HolidayRange, idx: number) => (

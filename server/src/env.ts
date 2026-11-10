@@ -28,6 +28,8 @@ export interface Env {
   githubOrg: string;
   port: number;
   configPath: string;
+  /** Optional: without it the app skips Factorial and only uses config.yaml holidays. */
+  factorialApiKey: string | null;
 }
 
 /**
@@ -44,5 +46,6 @@ export function loadEnv(): Env {
     githubOrg: required('GITHUB_ORG'),
     port: Number(optional('PORT', '4000')),
     configPath: path.isAbsolute(configPath) ? configPath : path.join(PROJECT_ROOT, configPath),
+    factorialApiKey: optional('FACTORIAL_API_KEY', '') || null,
   };
 }

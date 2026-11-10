@@ -35,6 +35,8 @@ export interface Config {
   distribution: Distribution;
   ticketRegex: string;
   holidays: HolidayRange[];
+  /** Opt-in Factorial integration: time off limits what can be logged each day. */
+  factorial: { enabled: boolean };
   people: Person[];
   defaultComments: { commits: string; fallback: string };
   issueComments: Record<string, string>;
@@ -59,6 +61,8 @@ export interface DayPlan {
   existingSeconds: number;
   entries: WorklogEntry[];
   warnings: string[];
+  /** Time off taken this day according to Factorial (holiday name or leave type). */
+  timeOff?: string[];
 }
 
 export interface Plan {
@@ -98,6 +102,21 @@ export interface PreviewResponse {
   stats: { reposScanned: number; branchesScanned: number; commits: number };
   commitsByDay: Record<string, CommitInfo[]>;
   loggedByDay: Record<string, LoggedDayEntry[]>;
+  /** Non-fatal problems while building the plan, e.g. Factorial unreachable. */
+  notices: string[];
+}
+
+/** What Factorial says about one day (mirrors the server's DayOff). */
+export interface DayOff {
+  secondsOff: number;
+  reasons: string[];
+  pending: string[];
+}
+
+export interface TimeOffResponse {
+  enabled: boolean;
+  days: Record<string, DayOff>;
+  notices: string[];
 }
 
 export interface ImputeResult {
@@ -161,6 +180,8 @@ export const api = {
     req<PreviewResponse>('/api/preview', { method: 'POST', body: JSON.stringify({ person, from, to }) }),
   impute: (person: string, plan: Plan) =>
     req<ImputeResult>('/api/impute', { method: 'POST', body: JSON.stringify({ person, plan }) }),
+  timeOff: (person: string, from: string, to: string) =>
+    req<TimeOffResponse>(`/api/time-off?person=${encodeURIComponent(person)}&from=${from}&to=${to}`),
   links: () => req<BranchLink[]>('/api/links'),
   addLink: (repo: string, branch: string, ticket: string) =>
     req<BranchLink>('/api/links', { method: 'POST', body: JSON.stringify({ repo, branch, ticket }) }),
@@ -209,7 +230,7 @@ export const api = {
               if (!chunk.startsWith('data: ')) continue;
               const event = JSON.parse(chunk.slice(6)) as { type: string; message?: string } & Partial<PreviewResponse>;
               if (event.type === 'progress' && event.message) onProgress(event.message);
-              else if (event.type === 'done') resolve({ plan: event.plan!, unlinkedBranches: event.unlinkedBranches!, stats: event.stats!, commitsByDay: event.commitsByDay ?? {}, loggedByDay: event.loggedByDay ?? {} });
+              else if (event.type === 'done') resolve({ plan: event.plan!, unlinkedBranches: event.unlinkedBranches!, stats: event.stats!, commitsByDay: event.commitsByDay ?? {}, loggedByDay: event.loggedByDay ?? {}, notices: event.notices ?? [] });
               else if (event.type === 'error') reject(new Error(event.message));
             }
           }

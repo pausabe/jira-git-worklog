@@ -37,6 +37,12 @@ distribution: weighted-by-churn
 # Regex para extraer la clave de Jira del nombre de la rama.
 ticketRegex: "[A-Z][A-Z0-9]+-\\d+"
 
+# Factorial (opcional). Con 'enabled: true', tus ausencias y los festivos de tu
+# sede reducen o anulan la jornada de cada dia, y no se puede imputar en un dia
+# libre. Requiere FACTORIAL_API_KEY en .env. Con 'false' no se consulta nada.
+factorial:
+  enabled: false
+
 # Dias festivos a saltar (formato YYYY-MM-DD)
 holidays: []
 

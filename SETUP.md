@@ -34,6 +34,11 @@ del dueño del token).
 
 > Si la organización usa **SSO**, tras crear el token pulsa **Configure SSO → Authorize** para habilitarlo.
 
+### Factorial API key (opcional)
+Solo hace falta si quieres que las ausencias y festivos salgan de Factorial (`factorial.enabled: true`).
+La crea un administrador de Factorial desde los ajustes de la cuenta. Es una clave de toda la empresa:
+trátala como un secreto y no la compartas.
+
 ---
 
 ## 3. Configurar secretos
@@ -52,6 +57,7 @@ JIRA_EMAIL=your-email@example.com
 JIRA_API_TOKEN=your_jira_api_token
 GITHUB_TOKEN=your_github_token
 GITHUB_ORG=your-org
+FACTORIAL_API_KEY=          # opcional, solo con factorial.enabled: true
 PORT=4000
 CONFIG_PATH=./config.yaml
 ```
@@ -80,6 +86,12 @@ Campos principales:
 - **`distribution`** — `weighted-by-churn` (por líneas cambiadas), `weighted-by-commits` o `equal`.
 - **`ticketRegex`** — patrón para extraer la clave del nombre de la rama (por defecto `[A-Z][A-Z0-9]+-\d+`).
 - **`holidays`** — fechas `YYYY-MM-DD` que se saltan.
+- **`factorial.enabled`** — `false` por defecto (no se consulta Factorial). Con `true`, tus ausencias y los
+  festivos de tu sede reducen o anulan la jornada de cada día y no se puede imputar en un día libre.
+  Se te identifica por los `emails` de tu persona. Las ausencias aprobadas cuentan, las rechazadas se
+  ignoran y las pendientes solo generan un aviso. Una ausencia con horas descuenta esas horas, medio día
+  descuenta 4 h y el resto el día entero. Se suma a `holidays`, no lo sustituye. Si Factorial no responde,
+  la previsualización sale con aviso y la imputación se rechaza entera.
 - **`people`** — cada persona con su `id`, `githubLogin`, `emails` (para atribuir commits) y `default: true`
   para la persona preseleccionada.
 

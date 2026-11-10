@@ -1,6 +1,7 @@
 import type { Config } from '../config.js';
 import type { CollectedCommit, DayPlan, Plan, WorklogEntry, WorklogSource } from '../types.js';
 import { eachDay, isWeekend, weekdayOf } from './dates.js';
+import type { DayOff } from './timeoff.js';
 
 const ROUND_SECONDS = 300; // round worklogs to 5-minute steps
 
@@ -15,6 +16,11 @@ function seasonalHours(config: Config, date: string): number {
     if (s.from <= mmdd && mmdd <= s.to) return s.hours;
   }
   return config.workday.defaultHours;
+}
+
+/** Length of a full workday on `date`, in seconds, before any time off. */
+export function workdaySecondsFor(config: Config, date: string): number {
+  return Math.round(seasonalHours(config, date) * 3600);
 }
 
 function roundTo(seconds: number, step: number): number {
@@ -79,6 +85,7 @@ export function buildPlan(
   commits: CollectedCommit[],
   existingByDay?: Map<string, number>,
   existingIssuesByDay?: Map<string, Set<string>>,
+  daysOff?: Map<string, DayOff>,
 ): Plan {
   // Aggregate commits by day -> ticket.
   const byDay = new Map<string, Map<string, TicketAgg>>();
@@ -102,14 +109,29 @@ export function buildPlan(
     if (isWeekend(date) || holidays.has(date)) continue;
 
     const weekday = weekdayOf(date);
-    const workdaySeconds = Math.round(seasonalHours(config, date) * 3600);
+    const off = daysOff?.get(date);
+    const workdaySeconds = Math.max(0, workdaySecondsFor(config, date) - (off?.secondsOff ?? 0));
+    const timeOff = off && off.reasons.length > 0 ? off.reasons : undefined;
     const entries: WorklogEntry[] = [];
-    const warnings: string[] = [];
+    const warnings: string[] = (off?.pending ?? []).map(
+      (type) => `Time off pending approval in Factorial: ${type}. Planned as a working day.`,
+    );
+    const existingSeconds = existingByDay?.get(date) ?? 0;
+
+    // Whole day off in Factorial: keep the day in the plan so the reason is
+    // visible, but plan nothing for it.
+    if (off && workdaySeconds === 0) {
+      if (existingSeconds > 0) {
+        const hours = Math.round((existingSeconds / 3600) * 100) / 100;
+        warnings.push(`${hours}h already logged in Jira on a day off in Factorial (${off.reasons.join(', ')}).`);
+      }
+      days.push({ date, weekday: 'Holiday', workdaySeconds, existingSeconds, entries, warnings, timeOff });
+      continue;
+    }
 
     // If the full day is already logged in Jira, skip everything.
-    const existingSeconds = existingByDay?.get(date) ?? 0;
     if (existingSeconds >= workdaySeconds) {
-      days.push({ date, weekday, workdaySeconds, entries, warnings, existingSeconds });
+      days.push({ date, weekday, workdaySeconds, entries, warnings, existingSeconds, timeOff });
       continue;
     }
 
@@ -159,7 +181,7 @@ export function buildPlan(
       // can fill it in manually via "Add entry".
     }
 
-    days.push({ date, weekday, workdaySeconds, existingSeconds, entries, warnings });
+    days.push({ date, weekday, workdaySeconds, existingSeconds, entries, warnings, timeOff });
   }
 
   return { person, from, to, days };
