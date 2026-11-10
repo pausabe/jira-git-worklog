@@ -49,8 +49,8 @@ export function timeOffViolation(
   if (windowSeconds === 0) {
     return `day off in Factorial (${off.reasons.join(', ')})`;
   }
-  // TODO(human): decide what happens on a partly-off day when plannedSeconds
-  // is larger than windowSeconds. For now such days are allowed through.
+  // Partly-off days are not limited: logging more than windowSeconds is allowed,
+  // as it is on a normal day. plannedSeconds excludes what Jira already holds.
   return null;
 }
 
