@@ -1,6 +1,6 @@
 import type { Config } from '../config.js';
 import type { CollectedCommit, DayPlan, Plan, WorklogEntry, WorklogSource } from '../types.js';
-import { eachDay, isWeekend, weekdayOf } from './dates.js';
+import { eachDay, isWeekend, localDay, weekdayOf } from './dates.js';
 import type { DayOff } from './timeoff.js';
 
 const ROUND_SECONDS = 300; // round worklogs to 5-minute steps
@@ -91,7 +91,7 @@ export function buildPlan(
   const byDay = new Map<string, Map<string, TicketAgg>>();
   for (const c of commits) {
     if (!c.ticket) continue;
-    const day = c.date.slice(0, 10);
+    const day = localDay(c.date);
     const tickets = byDay.get(day) ?? new Map<string, TicketAgg>();
     const agg = tickets.get(c.ticket) ?? { churn: 0, commits: 0 };
     agg.churn += c.churn;

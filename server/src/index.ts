@@ -8,6 +8,7 @@ import { loadConfig, saveConfig, ConfigSchema, type Config, type Person } from '
 import { JiraClient } from './clients/jira.js';
 import { GithubClient } from './clients/github.js';
 import { collectCommits } from './core/collect.js';
+import { localDay } from './core/dates.js';
 import { FactorialClient } from './clients/factorial.js';
 import { buildPlan, workdaySecondsFor } from './core/distribute.js';
 import { resolveDaysOff, timeOffViolation, type DayOff } from './core/timeoff.js';
@@ -175,11 +176,11 @@ app.post('/api/preview', async (req, reply) => {
     const plan = buildPlan(config, person.id, from, to, collected.commits, existingByDay, existingIssuesByDay, daysOff);
     const commitsByDay: Record<string, Array<{ repo: string; branch: string; ticket: string; message: string; churn: number; unlinked?: boolean }>> = {};
     for (const c of collected.commits) {
-      const date = c.date.slice(0, 10);
+      const date = localDay(c.date);
       (commitsByDay[date] ??= []).push({ repo: c.repo, branch: c.branch, ticket: c.ticket ?? '', message: c.message, churn: c.churn });
     }
     for (const c of collected.unlinkedCommits) {
-      const date = c.date.slice(0, 10);
+      const date = localDay(c.date);
       (commitsByDay[date] ??= []).push({ repo: c.repo, branch: c.branch, ticket: '', message: c.message, churn: 0, unlinked: true });
     }
     const allLinks = await listLinks();

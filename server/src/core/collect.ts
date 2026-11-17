@@ -2,7 +2,7 @@ import type { Config, Person } from '../config.js';
 import type { CollectedCommit } from '../types.js';
 import { GithubClient } from '../clients/github.js';
 import { extractTicketKey } from './ticket.js';
-import { isoStart, isoEnd } from './dates.js';
+import { addDays, isoStart, isoEnd, localDay } from './dates.js';
 import { getCachedChurn, cacheChurn, getLinkMap, linkKey } from '../store.js';
 
 export interface CollectResult {
@@ -47,8 +47,14 @@ export async function collectCommits(
   extraLinks?: Map<string, string>,
 ): Promise<CollectResult> {
   const author = authorIdentifier(person);
-  const since = isoStart(from);
-  const until = isoEnd(to);
+  // GitHub filters by UTC instants but days are local: ask for one extra day on
+  // each side and keep the commits whose local day is inside [from, to].
+  const since = isoStart(addDays(from, -1));
+  const until = isoEnd(addDays(to, 1));
+  const inRange = (iso: string) => {
+    const day = localDay(iso);
+    return day >= from && day <= to;
+  };
   const storeLinkMap = await getLinkMap();
   const linkMap = extraLinks?.size ? new Map([...storeLinkMap, ...extraLinks]) : storeLinkMap;
 
@@ -109,7 +115,8 @@ export async function collectCommits(
   // Fetch commits for all branches in parallel, then deduplicate sequentially.
   let completed = 0;
   const commitLists = await mapPool(branches, 6, async (ref) => {
-    const list = await github.listBranchUniqueCommits(ref.repo, ref.defaultBranch, ref.branch, author, since, until);
+    const list = (await github.listBranchUniqueCommits(ref.repo, ref.defaultBranch, ref.branch, author, since, until))
+      .filter((c) => inRange(c.date));
     completed += 1;
     onProgress?.(`Fetching commits… ${completed}/${branches.length} branches`);
     return { ref, list };

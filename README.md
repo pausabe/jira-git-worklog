@@ -167,6 +167,7 @@ Full field reference is in [SETUP.md](SETUP.md).
 | `FACTORIAL_API_KEY` | Optional. Factorial API key, only needed when `factorial.enabled` is `true` |
 | `PORT` | API server port (default: `4000`) |
 | `CONFIG_PATH` | Path to `config.yaml` (default: `./config.yaml`) |
+| `TZ` | Optional. Time zone that decides which day a commit belongs to, e.g. `Europe/Madrid` (default: the OS zone; set it in Docker, where it is UTC) |
 
 ---
 
