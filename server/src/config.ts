@@ -34,6 +34,21 @@ export const PersonSchema = z.object({
 });
 export type Person = z.infer<typeof PersonSchema>;
 
+/** One clock-in/clock-out pair, "HH:MM-HH:MM", the end after the start. */
+export const ShiftRangeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:MM-HH:MM')
+  .refine((r) => r.slice(0, 5) < r.slice(6), 'The end must be after the start');
+
+export const ScheduleSchema = z.object({
+  mon: z.array(ShiftRangeSchema).default([]),
+  tue: z.array(ShiftRangeSchema).default([]),
+  wed: z.array(ShiftRangeSchema).default([]),
+  thu: z.array(ShiftRangeSchema).default([]),
+  fri: z.array(ShiftRangeSchema).default([]),
+});
+export type Schedule = z.infer<typeof ScheduleSchema>;
+
 export const DistributionSchema = z.enum([
   'weighted-by-churn',
   'equal',
@@ -55,7 +70,15 @@ export const ConfigSchema = z.object({
   holidays: z.array(HolidayRangeSchema).default([]),
   // Opt-in: when off (the default) the app never calls Factorial and behaves
   // exactly as it did before the integration existed.
-  factorial: z.object({ enabled: z.boolean().default(false) }).default({}),
+  factorial: z
+    .object({
+      enabled: z.boolean().default(false),
+      // Clock-in template used to fill missing attendance shifts, per weekday,
+      // e.g. mon: ["08:00-14:00", "15:00-17:30"]. A weekday left empty is never
+      // filled in.
+      schedule: ScheduleSchema.default({}),
+    })
+    .default({}),
   people: z.array(PersonSchema).default([]),
   defaultComments: z
     .object({

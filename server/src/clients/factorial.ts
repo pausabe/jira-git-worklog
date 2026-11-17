@@ -28,6 +28,16 @@ export interface CompanyHoliday {
   halfDay: string | null;
 }
 
+/** One attendance shift: a clock-in/clock-out pair on a day. */
+export interface Shift {
+  id: string; // a string in this API version
+  date: string; // YYYY-MM-DD
+  clockIn: string | null; // "HH:MM" as Factorial returns it
+  clockOut: string | null;
+  minutes: number;
+  observations: string | null;
+}
+
 interface Page<T> {
   data?: T[];
   meta?: { has_next_page?: boolean };
@@ -52,6 +62,16 @@ interface RawLeave {
   hours_amount_in_cents?: number | null;
 }
 
+interface RawShift {
+  id: string;
+  employee_id: number | string;
+  date: string;
+  clock_in?: string | null;
+  clock_out?: string | null;
+  minutes?: number | null;
+  observations?: string | null;
+}
+
 interface RawHoliday {
   id: number;
   location_id: number;
@@ -61,7 +81,8 @@ interface RawHoliday {
 }
 
 /**
- * Read-only client for the Factorial HR API.
+ * Client for the Factorial HR API. It only reads, except `createShift`, which
+ * fills in missing attendance shifts.
  *
  * The API key is company-wide: it can read every employee. Every method here
  * therefore narrows to one employee or one location, and re-checks the rows it
@@ -74,11 +95,11 @@ export class FactorialClient {
   constructor(private readonly apiKey: string) {}
 
   /** Fetches every page of a list endpoint, de-duplicated by id. */
-  private async list<T extends { id: number }>(
+  private async list<T extends { id: number | string }>(
     pathname: string,
     params: Array<[string, string]> = [],
   ): Promise<T[]> {
-    const byId = new Map<number, T>();
+    const byId = new Map<number | string, T>();
     for (let page = 1; page <= MAX_PAGES; page += 1) {
       const qs = new URLSearchParams([...params, ['page', String(page)]]);
       const res = await fetch(`${BASE}/${pathname}?${qs}`, {
@@ -151,6 +172,66 @@ export class FactorialClient {
         halfDay: l.half_day ?? null,
         hours: l.hours_amount_in_cents != null ? l.hours_amount_in_cents / 100 : null,
       }));
+  }
+
+  /** Attendance shifts (clock-in/clock-out pairs) of one employee within [from, to]. */
+  async listShifts(employeeId: number, from: string, to: string): Promise<Shift[]> {
+    const rows = await this.list<RawShift>('attendance/shifts', [
+      ['employee_ids[]', String(employeeId)],
+      ['start_on', from],
+      ['end_on', to],
+    ]);
+    return rows
+      // Ids come back as strings in this API version despite the `number` type;
+      // compare as strings so either form matches.
+      .filter((s) => String(s.employee_id) === String(employeeId) && s.date >= from && s.date <= to)
+      .map((s) => ({
+        id: String(s.id),
+        date: s.date,
+        clockIn: s.clock_in ?? null,
+        clockOut: s.clock_out ?? null,
+        minutes: s.minutes ?? 0,
+        observations: s.observations ?? null,
+      }));
+  }
+
+  /**
+   * Creates one complete shift. `clockIn` and `clockOut` are ISO 8601 instants
+   * with offset, the format Factorial's docs show for this endpoint. No
+   * observations, like a shift typed in on the web. Factorial records the
+   * source as `api` whatever is sent (a `source: 'desktop'` is ignored), so
+   * that field is the one difference from a shift entered by hand.
+   */
+  async createShift(input: {
+    employeeId: number;
+    date: string;
+    clockIn: string;
+    clockOut: string;
+  }): Promise<Shift> {
+    const res = await fetch(`${BASE}/attendance/shifts`, {
+      method: 'POST',
+      headers: { 'x-api-key': this.apiKey, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_id: String(input.employeeId),
+        date: input.date,
+        clock_in: input.clockIn,
+        clock_out: input.clockOut,
+        workable: true,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Factorial POST attendance/shifts → ${res.status}: ${body.slice(0, 300)}`);
+    }
+    const s = (await res.json()) as RawShift;
+    return {
+      id: String(s.id),
+      date: s.date,
+      clockIn: s.clock_in ?? null,
+      clockOut: s.clock_out ?? null,
+      minutes: s.minutes ?? 0,
+      observations: s.observations ?? null,
+    };
   }
 
   /**

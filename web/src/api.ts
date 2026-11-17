@@ -36,7 +36,7 @@ export interface Config {
   ticketRegex: string;
   holidays: HolidayRange[];
   /** Opt-in Factorial integration: time off limits what can be logged each day. */
-  factorial: { enabled: boolean };
+  factorial: { enabled: boolean; schedule?: Partial<Record<'mon' | 'tue' | 'wed' | 'thu' | 'fri', string[]>> };
   people: Person[];
   defaultComments: { commits: string; fallback: string };
   issueComments: Record<string, string>;

@@ -20,14 +20,29 @@ export interface LedgerEntry {
   createdAt: string;
 }
 
+/**
+ * One Factorial attendance shift this app created. Factorial keeps no trace of
+ * that (no marker in its observations, same source as the web), so this is the
+ * only way to list or undo them.
+ */
+export interface ShiftRecord {
+  person: string;
+  date: string; // YYYY-MM-DD
+  clockIn: string; // HH:MM
+  clockOut: string; // HH:MM
+  shiftId: string;
+  createdAt: string;
+}
+
 interface DbShape {
   links: BranchLink[];
   ledger: LedgerEntry[];
+  shifts: ShiftRecord[];
   churn: Record<string, number>; // sha -> added + deleted (immutable per sha)
 }
 
 const DB_FILE = path.join(DATA_DIR, 'store.json');
-const EMPTY: DbShape = { links: [], ledger: [], churn: {} };
+const EMPTY: DbShape = { links: [], ledger: [], shifts: [], churn: {} };
 
 async function readDb(): Promise<DbShape> {
   try {
@@ -36,6 +51,7 @@ async function readDb(): Promise<DbShape> {
     return {
       links: parsed.links ?? [],
       ledger: parsed.ledger ?? [],
+      shifts: parsed.shifts ?? [],
       churn: parsed.churn ?? {},
     };
   } catch (err) {
@@ -128,4 +144,17 @@ export async function cacheChurn(entries: Record<string, number>): Promise<void>
   const db = await readDb();
   Object.assign(db.churn, entries);
   await writeDb(db);
+}
+
+// ---- Factorial shifts created by the app ----
+
+export async function recordShift(entry: ShiftRecord): Promise<void> {
+  const db = await readDb();
+  db.shifts.push(entry);
+  await writeDb(db);
+}
+
+export async function listRecordedShifts(person?: string): Promise<ShiftRecord[]> {
+  const db = await readDb();
+  return person ? db.shifts.filter((s) => s.person === person) : db.shifts;
 }

@@ -42,6 +42,11 @@ ticketRegex: "[A-Z][A-Z0-9]+-\\d+"
 # libre. Requiere FACTORIAL_API_KEY en .env. Con 'false' no se consulta nada.
 factorial:
   enabled: false
+  # Plantilla de fichajes por dia de la semana, para rellenar los dias sin
+  # fichar en Factorial (siempre con vista previa). Un dia vacio no se rellena.
+  # schedule:
+  #   mon: ["08:00-14:00", "15:00-17:30"]
+  #   fri: ["08:00-14:00"]
 
 # Dias festivos a saltar (formato YYYY-MM-DD)
 holidays: []

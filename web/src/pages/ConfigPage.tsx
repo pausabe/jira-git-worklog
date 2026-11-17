@@ -185,7 +185,7 @@ export function ConfigPage() {
           <input
             type="checkbox"
             checked={draft.factorial?.enabled ?? false}
-            onChange={(e) => patch({ factorial: { enabled: e.target.checked } })}
+            onChange={(e) => patch({ factorial: { ...draft.factorial, enabled: e.target.checked } })}
           />
           <span className="toggle-track"><span className="toggle-thumb" /></span>
           Use Factorial time off

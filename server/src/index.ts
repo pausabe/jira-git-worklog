@@ -13,7 +13,8 @@ import { FactorialClient } from './clients/factorial.js';
 import { buildPlan, workdaySecondsFor } from './core/distribute.js';
 import { resolveDaysOff, timeOffViolation, type DayOff } from './core/timeoff.js';
 import { applyPlan } from './core/impute.js';
-import { listLinks, upsertLink, deleteLink, getLastLoggedDate, linkKey } from './store.js';
+import { planAttendance, localInstant } from './core/attendance.js';
+import { listLinks, upsertLink, deleteLink, getLastLoggedDate, linkKey, recordShift, listRecordedShifts } from './store.js';
 import { WEB_DIST_DIR } from './paths.js';
 import type { Plan } from './types.js';
 
@@ -298,6 +299,111 @@ app.get('/api/time-off', async (req, reply) => {
   }
   const { daysOff, notices } = await loadDaysOff(config, person, from, to);
   return { enabled: config.factorial.enabled, days: Object.fromEntries(daysOff ?? []), notices };
+});
+
+const AttendanceBody = z.object({
+  person: z.string().min(1),
+  from: DateStr,
+  to: DateStr,
+  /** apply only: the dates the user saw as `create` in the preview. Others are left alone. */
+  dates: z.array(DateStr).optional(),
+});
+
+/**
+ * Builds the attendance plan from Factorial's current data: existing shifts and
+ * time off. Throws when Factorial is off or unreachable, because without it
+ * there is no way to know which days are already clocked.
+ */
+async function loadAttendancePlan(config: Config, person: Person, from: string, to: string) {
+  if (!config.factorial.enabled) throw new Error('Factorial is disabled in config.yaml (factorial.enabled)');
+  if (!factorial) throw new Error('FACTORIAL_API_KEY is not set');
+  const employee = await factorial.findEmployee(person.emails);
+  if (!employee) throw new Error(`Factorial: no employee matches the emails of '${person.id}'`);
+  const [shifts, timeOff] = await Promise.all([
+    factorial.listShifts(employee.id, from, to),
+    loadDaysOff(config, person, from, to),
+  ]);
+  if (!timeOff.daysOff) throw new Error(timeOff.notices.join(' ') || 'Factorial time off is unavailable');
+  const days = planAttendance(config, from, to, shifts, timeOff.daysOff, (date) => workdaySecondsFor(config, date));
+  return { employeeId: employee.id, days };
+}
+
+async function attendanceRequest(body: unknown, reply: { code: (n: number) => unknown }) {
+  const parsed = AttendanceBody.safeParse(body);
+  if (!parsed.success) {
+    reply.code(400);
+    return { error: 'Invalid parameters', issues: parsed.error.issues } as const;
+  }
+  const config = await loadConfig(env.configPath);
+  const person = config.people.find((p) => p.id === parsed.data.person);
+  if (!person) {
+    reply.code(400);
+    return { error: `Person '${parsed.data.person}' not found in config.people` } as const;
+  }
+  return { ...parsed.data, config, person };
+}
+
+/** Which working days are missing their clock-in in Factorial, and what would be created. */
+app.post('/api/attendance/preview', async (req, reply) => {
+  const request = await attendanceRequest(req.body, reply);
+  if ('error' in request) return request;
+  try {
+    const { days } = await loadAttendancePlan(request.config, request.person, request.from, request.to);
+    return { from: request.from, to: request.to, days };
+  } catch (err) {
+    reply.code(502);
+    return { error: (err as Error).message };
+  }
+});
+
+/**
+ * Creates the template shifts for the `create` days of a freshly built plan,
+ * limited to `dates` when given. The plan is rebuilt here, not taken from the
+ * client, so a day clocked in by hand since the preview is never doubled.
+ */
+app.post('/api/attendance/apply', async (req, reply) => {
+  const request = await attendanceRequest(req.body, reply);
+  if ('error' in request) return request;
+  let plan;
+  try {
+    plan = await loadAttendancePlan(request.config, request.person, request.from, request.to);
+  } catch (err) {
+    reply.code(502);
+    return { error: `${(err as Error).message}. Nothing was sent to Factorial.` };
+  }
+  const wanted = request.dates ? new Set(request.dates) : null;
+  const created: Array<{ date: string; clockIn: string; clockOut: string; id: string }> = [];
+  const skipped: Array<{ date: string; reason: string }> = [];
+  const failed: Array<{ date: string; clockIn: string; error: string }> = [];
+  for (const day of plan.days) {
+    if (wanted && !wanted.has(day.date)) continue;
+    if (day.status !== 'create') {
+      if (wanted) skipped.push({ date: day.date, reason: day.reason ?? day.status });
+      continue;
+    }
+    for (const shift of day.shifts) {
+      try {
+        const res = await factorial!.createShift({
+          employeeId: plan.employeeId,
+          date: day.date,
+          clockIn: localInstant(day.date, shift.clockIn),
+          clockOut: localInstant(day.date, shift.clockOut),
+        });
+        await recordShift({ person: request.person.id, date: day.date, ...shift, shiftId: res.id, createdAt: new Date().toISOString() });
+        created.push({ date: day.date, ...shift, id: res.id });
+      } catch (err) {
+        failed.push({ date: day.date, clockIn: shift.clockIn, error: (err as Error).message });
+        break; // do not leave a day with its afternoon but not its morning
+      }
+    }
+  }
+  return { created, skipped, failed };
+});
+
+/** Shifts this app created in Factorial (it leaves no trace there), newest last. */
+app.get('/api/attendance/created', async (req) => {
+  const person = (req.query as { person?: string }).person;
+  return listRecordedShifts(person);
 });
 
 app.get('/api/links', async () => listLinks());
