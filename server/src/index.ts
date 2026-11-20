@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { loadEnv } from './env.js';
-import { loadConfig, saveConfig, ConfigSchema, type Config, type Person } from './config.js';
+import { loadConfig, saveConfig, ConfigSchema, ShiftRangeSchema, type Config, type Person } from './config.js';
 import { JiraClient } from './clients/jira.js';
 import { GithubClient } from './clients/github.js';
 import { collectCommits } from './core/collect.js';
@@ -13,7 +13,7 @@ import { FactorialClient } from './clients/factorial.js';
 import { buildPlan, workdaySecondsFor } from './core/distribute.js';
 import { resolveDaysOff, timeOffViolation, type DayOff } from './core/timeoff.js';
 import { applyPlan } from './core/impute.js';
-import { planAttendance, localInstant } from './core/attendance.js';
+import { planAttendance, localInstant, parseRanges, checkTimes, type PlannedShift } from './core/attendance.js';
 import { listLinks, upsertLink, deleteLink, getLastLoggedDate, linkKey, recordShift, listRecordedShifts } from './store.js';
 import { WEB_DIST_DIR } from './paths.js';
 import type { Plan } from './types.js';
@@ -307,6 +307,8 @@ const AttendanceBody = z.object({
   to: DateStr,
   /** apply only: the dates the user saw as `create` in the preview. Others are left alone. */
   dates: z.array(DateStr).optional(),
+  /** Per-day shifts that replace the template, e.g. {"2026-11-17": ["08:07-14:02", "14:58-17:33"]}. */
+  times: z.record(DateStr, z.array(ShiftRangeSchema).min(1)).optional(),
 });
 
 /**
@@ -314,7 +316,13 @@ const AttendanceBody = z.object({
  * time off. Throws when Factorial is off or unreachable, because without it
  * there is no way to know which days are already clocked.
  */
-async function loadAttendancePlan(config: Config, person: Person, from: string, to: string) {
+async function loadAttendancePlan(
+  config: Config,
+  person: Person,
+  from: string,
+  to: string,
+  times: Map<string, PlannedShift[]> = new Map(),
+) {
   if (!config.factorial.enabled) throw new Error('Factorial is disabled in config.yaml (factorial.enabled)');
   if (!factorial) throw new Error('FACTORIAL_API_KEY is not set');
   const employee = await factorial.findEmployee(person.emails);
@@ -324,7 +332,7 @@ async function loadAttendancePlan(config: Config, person: Person, from: string, 
     loadDaysOff(config, person, from, to),
   ]);
   if (!timeOff.daysOff) throw new Error(timeOff.notices.join(' ') || 'Factorial time off is unavailable');
-  const days = planAttendance(config, from, to, shifts, timeOff.daysOff, (date) => workdaySecondsFor(config, date));
+  const days = planAttendance(config, from, to, shifts, timeOff.daysOff, (date) => workdaySecondsFor(config, date), times);
   return { employeeId: employee.id, days };
 }
 
@@ -340,7 +348,13 @@ async function attendanceRequest(body: unknown, reply: { code: (n: number) => un
     reply.code(400);
     return { error: `Person '${parsed.data.person}' not found in config.people` } as const;
   }
-  return { ...parsed.data, config, person };
+  const times = new Map(Object.entries(parsed.data.times ?? {}).map(([date, ranges]) => [date, parseRanges(ranges)]));
+  const problems = checkTimes(config.factorial.schedule, times);
+  if (problems.length > 0) {
+    reply.code(400);
+    return { error: `Invalid times: ${problems.join('; ')}` } as const;
+  }
+  return { ...parsed.data, config, person, times };
 }
 
 /** Which working days are missing their clock-in in Factorial, and what would be created. */
@@ -348,7 +362,7 @@ app.post('/api/attendance/preview', async (req, reply) => {
   const request = await attendanceRequest(req.body, reply);
   if ('error' in request) return request;
   try {
-    const { days } = await loadAttendancePlan(request.config, request.person, request.from, request.to);
+    const { days } = await loadAttendancePlan(request.config, request.person, request.from, request.to, request.times);
     return { from: request.from, to: request.to, days };
   } catch (err) {
     reply.code(502);
@@ -366,7 +380,7 @@ app.post('/api/attendance/apply', async (req, reply) => {
   if ('error' in request) return request;
   let plan;
   try {
-    plan = await loadAttendancePlan(request.config, request.person, request.from, request.to);
+    plan = await loadAttendancePlan(request.config, request.person, request.from, request.to, request.times);
   } catch (err) {
     reply.code(502);
     return { error: `${(err as Error).message}. Nothing was sent to Factorial.` };

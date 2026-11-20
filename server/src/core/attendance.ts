@@ -42,6 +42,8 @@ const minutesOf = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.
  * existing shifts and `daysOff` comes from Factorial (see resolveDaysOff).
  * `workdaySeconds` is the Jira workday of a date: resolveDaysOff caps time off
  * at it, so a day is wholly off when its time off reaches it.
+ * `times` replaces the template's shifts on the dates it lists; each must add
+ * up to the template's minutes for that weekday (checked by checkTimes).
  */
 export function planAttendance(
   config: Config,
@@ -50,6 +52,7 @@ export function planAttendance(
   shifts: Shift[],
   daysOff: Map<string, DayOff>,
   workdaySeconds: (date: string) => number,
+  times: Map<string, PlannedShift[]> = new Map(),
 ): AttendanceDay[] {
   const holidays = new Set(config.holidays.flatMap(({ from: f, to: t }) => eachDay(f, t)));
   const shiftsByDay = new Map<string, Shift[]>();
@@ -87,10 +90,32 @@ export function planAttendance(
     } else if (template.length === 0) {
       days.push(day('no-schedule', [], `no template for ${weekday} in factorial.schedule`));
     } else {
-      days.push(day('create', template));
+      days.push(day('create', times.get(date) ?? template));
     }
   }
   return days;
+}
+
+/** Parses "HH:MM-HH:MM" ranges into shifts. */
+export function parseRanges(ranges: string[]): PlannedShift[] {
+  return ranges.map((r) => ({ clockIn: r.slice(0, 5), clockOut: r.slice(6) }));
+}
+
+/**
+ * Checks per-day times that replace the template: in order, not overlapping,
+ * and adding up to exactly the template's minutes for that weekday, so the
+ * day keeps the agreed hours. Returns one problem per bad date.
+ */
+export function checkTimes(schedule: Schedule, times: Map<string, PlannedShift[]>): string[] {
+  const problems: string[] = [];
+  for (const [date, shifts] of times) {
+    const expected = templateFor(schedule, date).reduce((s, x) => s + minutesOf(x.clockOut) - minutesOf(x.clockIn), 0);
+    const total = shifts.reduce((s, x) => s + minutesOf(x.clockOut) - minutesOf(x.clockIn), 0);
+    const ordered = shifts.every((x, i) => i === 0 || minutesOf(shifts[i - 1]!.clockOut) <= minutesOf(x.clockIn));
+    if (!ordered) problems.push(`${date}: the shifts overlap or are out of order`);
+    else if (total !== expected) problems.push(`${date}: ${total} min, the template for that weekday is ${expected} min`);
+  }
+  return problems;
 }
 
 /**
