@@ -192,7 +192,7 @@ With `factorial.enabled: true` (also a toggle in the **Config** tab) and `FACTOR
 
 - **Authorship**: worklogs are created under the Jira token owner. Logging on behalf of a teammate requires OAuth 3LO, which this tool does not implement.
 - **Branch scanning**: commits are found by scanning org branches, not GitHub's global commit search (which only indexes the default branch).
-- **GitHub rate limits**: the first run on a large organization can be slow. Subsequent runs are faster thanks to the churn cache.
+- **GitHub rate limits**: commits are fetched through the GraphQL API, batching ~20 branches per request (a month over ~1000 branches costs a few dozen points of the 5000/h budget). Repos and branches with no activity since the start of the range are skipped, and lines-changed data is cached per SHA.
 - **Factorial, partly-off days**: on a day with partial time off the reduced workday drives the plan, but the server does not reject logging more hours than that window.
 - **Factorial API key scope**: an API key is company-wide. The app only requests the matched employee's leaves and their office's holidays.
 - **Local data**: branch links, churn cache, and imputation ledger live in `server/data/store.json`, which is git-ignored.
