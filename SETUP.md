@@ -133,8 +133,9 @@ npm run check:jira
   usa el suyo; no se puede imputar en nombre de un compañero (requeriría OAuth 3LO).
 - **Ramas, no default branch**: se recorren repos → ramas → commits. La búsqueda global de GitHub
   (`/search/commits`) solo indexa la rama por defecto, por eso no se usa.
-- **Rate limits de GitHub**: en organizaciones con muchos repos la primera recolección puede tardar;
-  el churn (líneas cambiadas) se **cachea por SHA** para acelerar las siguientes.
+- **Rate limits de GitHub**: los commits se obtienen con la API GraphQL agrupando ~20 ramas por petición
+  (un mes sobre ~1000 ramas cuesta unas decenas de puntos del presupuesto de 5000/h). Se saltan los repos
+  y ramas sin actividad desde el inicio del rango, y el churn (líneas cambiadas) se **cachea por SHA**.
 - **Datos locales**: vínculos de ramas, caché de churn y registro de imputaciones se guardan en
   `server/data/store.json` (ignorado por git).
 ```
